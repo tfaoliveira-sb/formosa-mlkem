@@ -2,16 +2,19 @@ require "fips202.jinc"
 require "params.jinc"
 
 inline
-fn __rej_uniform(stack u16[MLKEM_N] rp, reg u64 offset, stack u8[SHAKE128_RATE] buf) ->  reg u64, stack u16[MLKEM_N]
+fn __rej_uniform(
+  stack u16[MLKEM_N] rp,
+  reg u64 offset,
+  stack u8[SHAKE128_RATE] buf,
+  #msf reg u64 ms)
+  ->
+  reg u64, stack u16[MLKEM_N], #msf reg u64
 {
   reg u16 val1 val2;
   reg u16 t;
   reg u64 pos ctr;
 
-  #msf reg u64 ms;
   reg bool cond;
-
-  ms = #init_msf();
 
   ctr = offset;
   pos = 0;
@@ -75,7 +78,9 @@ fn __rej_uniform(stack u16[MLKEM_N] rp, reg u64 offset, stack u8[SHAKE128_RATE] 
 
   }
 
-  return ctr, rp;
+  ms = #update_msf(!cond, ms);
+
+  return ctr, rp, ms;
 }
 
 inline
@@ -94,6 +99,11 @@ fn __gen_matrix(stack u8[MLKEM_SYMBYTES] seed, reg u64 transposed) -> stack u16[
   #mmx reg u64 stransposed;
   inline int j i;
 
+  #msf reg u64 ms;
+  reg bool cond;
+
+  ms = #init_msf();
+
   stransposed = transposed;
 
   for j = 0 to MLKEM_SYMBYTES
@@ -108,13 +118,16 @@ fn __gen_matrix(stack u8[MLKEM_SYMBYTES] seed, reg u64 transposed) -> stack u16[
     {
       transposed = stransposed;
 
-      if(transposed == 0)
+      cond = (transposed == 0);
+      if cond
       {
+        ms = #update_msf(cond, ms);
         extseed[MLKEM_SYMBYTES] = j;
         extseed[MLKEM_SYMBYTES+1] = i;
       }
       else
       {
+        ms = #update_msf(!cond, ms);
         extseed[MLKEM_SYMBYTES] = i;
         extseed[MLKEM_SYMBYTES+1] = j;
       }
@@ -122,24 +135,31 @@ fn __gen_matrix(stack u8[MLKEM_SYMBYTES] seed, reg u64 transposed) -> stack u16[
       state = _shake128_absorb34(state, extseed);
 
       ctr = 0;
-      while (ctr < MLKEM_N)
+      while { cond = (ctr < MLKEM_N); } (cond)
       {
+        ms = #update_msf(cond, ms);
+
         sctr = ctr;
-        state, buf = _shake128_squeezeblock(state, buf);
+        state, buf, ms = _shake128_squeezeblock_msf(state, buf, ms);
         ctr = sctr;
 
-        ctr, poly  = __rej_uniform(poly, ctr, buf);
+        ctr, poly, ms  = __rej_uniform(poly, ctr, buf, ms);
       }
+      ms = #update_msf(!cond, ms);
 
       k = 0;
       reg ptr u16[MLKEM_N] rij;
       rij = r[i * MLKEM_VECN + j * MLKEM_N : MLKEM_N];
-      while (k < MLKEM_N)
+      while { cond = (k < MLKEM_N); } (cond)
       {
+        ms = #update_msf(cond, ms);
+
         t = poly[(int) k];
         rij[k] = t;
         k += 1;
       }
+      ms = #update_msf(!cond, ms);
+
       r[i * MLKEM_VECN + j * MLKEM_N : MLKEM_N] = rij;
     }
   }

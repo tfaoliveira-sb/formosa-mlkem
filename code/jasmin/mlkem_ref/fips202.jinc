@@ -48,7 +48,7 @@ inline fn keccakf1600_rho_offsets(inline int i) -> inline int
   y = 0;
 
   for t = 0 to 24
-  { if (i == x + 5 * y)
+  { #inline if (i == x + 5 * y)
     { r = ((t + 1) * (t + 2) / 2) % 64; }
     z = (2 * x + 3 * y) % 5;
     x = y;
@@ -133,7 +133,7 @@ inline fn keccakf1600_rol_sum(
     b[x] ^= d[x_];
 
     // B[x] = ROT( B[x], r[x',y'] );
-    if(r != 0)
+    #inline if(r != 0)
     { _, _, b[x] = #ROL_64(b[x], r); }
 
   }
@@ -163,7 +163,7 @@ inline fn keccakf1600_set_row(
     t = b[x1]; t = !t; t &= b[x2];
 
     t ^= b[x];
-    if( x==0 && y==0 ){ t ^= s_rc; }
+    #inline if( x==0 && y==0 ){ t ^= s_rc; }
     e[x + y*5] = t;
   }
 
@@ -220,10 +220,49 @@ inline fn __keccakf1600(reg ptr u64[25] a) -> reg ptr u64[25]
   return a;
 }
 
+inline fn __keccakf1600_msf(reg ptr u64[25] a, #msf reg u64 ms) -> reg ptr u64[25], #msf reg u64
+{
+  reg ptr u64[24] RC;
+  stack u64[25] s_e;
+  reg ptr u64[25] e;
+
+  reg u64 c rc;
+  reg bool cond;
+  #mmx #msf reg u64 sms;
+
+  RC = KECCAK1600_RC;
+  e = s_e;
+
+  c = 0;
+  while {cond = (c < KECCAK_ROUNDS - 1); } (cond)
+  {
+    ms = #update_msf(cond, ms);
+    sms = #mov_msf(ms);
+
+    rc = RC[(int) c];
+    e = keccakf1600_round(e, a, rc);
+
+    rc = RC[(int) c + 1];
+    a = keccakf1600_round(a, e, rc);
+
+    ms = #mov_msf(sms);
+    c += 2;
+  }
+  ms = #update_msf(!cond, ms);
+
+  return a, ms;
+}
+
 fn _keccakf1600(reg ptr u64[25] a) -> reg ptr u64[25]
 {
   a = __keccakf1600(a);
   return a;
+}
+
+fn _keccakf1600_msf(reg ptr u64[25] a, #msf reg u64 ms) -> reg ptr u64[25], #msf reg u64
+{
+  a, ms = __keccakf1600_msf(a, ms);
+  return a, ms;
 }
 
 inline fn _keccakf1600_(reg ptr u64[25] a) -> reg ptr u64[25]
@@ -233,6 +272,15 @@ inline fn _keccakf1600_(reg ptr u64[25] a) -> reg ptr u64[25]
   a = a;
   return a;
 }
+
+inline fn _keccakf1600_msf_(reg ptr u64[25] a, #msf reg u64 ms) -> reg ptr u64[25], #msf reg u64
+{
+  a = a;
+  a, ms = _keccakf1600_msf(a, ms);
+  a = a;
+  return a, ms;
+}
+
 
 inline
 fn __st0(reg ptr u64[25] state) -> reg ptr u64[25]
@@ -600,7 +648,6 @@ fn _shake128_absorb34(reg ptr u64[25] state, reg const ptr u8[34] in) -> reg ptr
   return state;
 }
 
-
 fn _shake128_squeezeblock(reg ptr u64[25] state, #spill_to_mmx reg ptr u8[SHAKE128_RATE] out) -> reg ptr u64[25], reg ptr u8[SHAKE128_RATE]
 {
   reg u8 c;
@@ -619,6 +666,28 @@ fn _shake128_squeezeblock(reg ptr u64[25] state, #spill_to_mmx reg ptr u8[SHAKE1
   return state, out;
 }
 
+fn _shake128_squeezeblock_msf(
+  reg ptr u64[25] state,
+  #spill_to_mmx reg ptr u8[SHAKE128_RATE] out,
+  #msf reg u64 ms)
+  ->
+  reg ptr u64[25], reg ptr u8[SHAKE128_RATE], #msf reg u64
+{
+  reg u8 c;
+  inline int i;
+
+  () = #spill(out);
+
+  state, ms = _keccakf1600_msf_(state, ms);
+
+  () = #unspill(out);
+
+  for i = 0 to SHAKE128_RATE { // SHAKE128 rate is 168: or 21 u64: TODO: 'compress' this for loop
+    c = state[u8 (int) i];
+    out[i] = c;
+  }
+  return state, out, ms;
+}
 
 #[returnaddress="stack"]
 fn _isha3_256(#spill_to_mmx reg ptr u8[32] out, #spill_to_mmx reg u64 in inlen) -> reg ptr u8[32]
